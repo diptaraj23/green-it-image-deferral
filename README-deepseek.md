@@ -19,7 +19,26 @@ page the frozen DeepSeek file shows:
 - every other byte of the original HTML is preserved, and the source file and
   site assets are never touched (output goes to `--output`, default stdout).
 
-## Usage
+## Try it with this repository alone
+
+The frozen webpage is intentionally not in this repository. From the
+repository root, this sample checks the tool on a different HTML page using
+only Python's standard library:
+
+```bash
+printf '%s\n' '<!DOCTYPE html><html><body><img src="img/a.png" alt="A"></body></html>' > /tmp/sample.html
+python3 defer_images_deepseek.py /tmp/sample.html img/a.png \
+  --selector 'img[data-src]' -o /tmp/sample-deferred.html
+```
+
+The output file should contain `data-src="img/a.png"` and the injected
+`IntersectionObserver` script. The original `/tmp/sample.html` stays unchanged.
+
+## Reproduce the frozen-page transform
+
+The commands in this section require the separate course project containing
+the frozen webpage. Run them from that project's root, where the script is in
+`tools/`:
 
 ```bash
 python3 tools/defer_images_deepseek.py \
