@@ -1,9 +1,10 @@
 # defer_images_deepseek.py
 
-Reusable, standard-library-only Python script that **independently reproduces the
-image deferral** implemented in
-`webpage/optimized/deepseek/differdange-environment-local.html` (the frozen
-DeepSeek optimised page).
+Reusable Python script that reproduces the image deferral in
+`webpage/optimized/deepseek/differdange-environment-local.html` and, in its
+combined mode, the WebP compression in `webpage/optimized/deepseek-webp/`.
+Deferral alone uses only Python's standard library; the combined mode also
+requires Google's `cwebp` command on `PATH`.
 
 Given the original
 `webpage/differdange-environment-local.html` and the two exact image `src`
@@ -18,6 +19,10 @@ page the frozen DeepSeek file shows:
   immediately;
 - every other byte of the original HTML is preserved, and the source file and
   site assets are never touched (output goes to `--output`, default stdout).
+
+With `--webp-image` and `--site-output`, the same script copies the frozen
+page's asset directory, converts the selected local PNG or JPEG to WebP, and
+updates its URL in the output HTML. The source page and assets remain intact.
 
 ## Try it with this repository alone
 
@@ -52,6 +57,30 @@ Any number of `SRC` values may be given; each is rewritten only on `<img>` tags.
 The frozen page `webpage/optimized/deepseek/differdange-environment-local.html`
 is kept as the verification reference (see below), so write the output to a
 fresh path rather than overwriting it.
+
+### Reproduce deferral and WebP compression in one command
+
+From the course project root, run:
+
+```bash
+python3 tools/defer_images_deepseek.py \
+  webpage/differdange-environment-local.html \
+  ./differdange-environment-local_files/dechets.png \
+  ./differdange-environment-local_files/netzerocities-528x388.jpg \
+  --webp-image ./differdange-environment-local_files/environnement-aides-528x388.png \
+  --quality 90 \
+  --site-output /tmp/differdange-combined \
+  --verify webpage/optimized/deepseek-webp/differdange-environment-local.html
+```
+
+The output directory must not already exist. The script uses `cwebp` method
+6. The Financial aid card image remains 528 by 388 pixels; its file size fell
+from 275,291 to 23,666 bytes in the measured copy. The copied assets retain
+the original PNG, but the output HTML requests the WebP file. Check image
+appearance in a browser and measure loads with the same cache, throttling,
+server, and scrolling settings before interpreting transfer savings. The
+`--verify` path above is available only in the separate course project;
+reviewers using this repository alone can omit it.
 
 ### Custom selector for other HTML structures
 

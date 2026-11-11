@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Defer below-the-fold <img> images using the data-src/data-srcset pattern.
+"""Defer below-the-fold images and optionally compress a local image to WebP.
 
 Independently reproduces the image deferral implemented in
 ``webpage/optimized/deepseek/differdange-environment-local.html`` (the frozen
@@ -25,9 +25,10 @@ What the tool does, byte-faithfully:
      default selector keeps the script byte-for-byte identical to the one in
      the frozen page.
 
-The original source file and the site assets are never modified; the result is
-written to ``--output`` (or stdout). The implementation is standard-library
-only (argparse + the ``bytes``/``str`` API).
+The original source file and site assets are never modified. Deferral-only
+output goes to ``--output`` (or stdout). Combined output uses ``--site-output``
+to write an HTML file and copied assets; this mode requires Google's ``cwebp``
+command. The Python implementation uses only the standard library.
 
 This is written independently from the earlier ``tools/defer_images.py`` and
 from ``webpage/optimized/differdange-environment-local.html``: the transform
@@ -35,6 +36,9 @@ here was derived from the observable deferral in the frozen DeepSeek page.
 """
 
 import argparse
+from pathlib import Path
+import shutil
+import subprocess
 import sys
 
 # Default src values used by the frozen page's quicklink cards (Waste, Projects).
@@ -174,6 +178,43 @@ def build_defer_script(selector=DEFAULT_SELECTOR):
     return script
 
 
+def write_combined_site(source, html, image_src, destination, quality):
+    """Copy the frozen page's assets and replace one image with a WebP copy."""
+    image_path = Path(image_src)
+    asset_dir_name = source.stem + '_files'
+    if (image_path.is_absolute() or '..' in image_path.parts
+            or not image_path.parts or image_path.parts[0] != asset_dir_name
+            or image_path.suffix.lower() not in {'.png', '.jpg', '.jpeg'}):
+        raise ValueError('WebP image must be a PNG or JPEG inside %s' % asset_dir_name)
+    if len(_find_img_tag_occurrences(html, image_src.encode('utf-8'))) != 1:
+        raise ValueError('WebP image src must occur in exactly one <img> tag')
+    if html.count(image_src.encode('utf-8')) != 1:
+        raise ValueError('WebP image path must occur exactly once in the HTML')
+    original_image = source.parent / image_path
+    original_assets = source.parent / asset_dir_name
+    if not original_image.is_file() or not original_assets.is_dir():
+        raise ValueError('source image and asset directory must exist beside the HTML')
+    if shutil.which('cwebp') is None:
+        raise ValueError('cwebp is required on PATH for WebP compression')
+    if destination.exists():
+        raise ValueError('site output directory already exists: %s' % destination)
+
+    webp_path = image_path.with_suffix('.webp')
+    webp_src = image_src[: -len(image_path.suffix)] + '.webp'
+    final_html = html.replace(image_src.encode('utf-8'), webp_src.encode('utf-8'))
+    destination.mkdir(parents=True)
+    try:
+        shutil.copytree(original_assets, destination / asset_dir_name)
+        subprocess.run(['cwebp', '-quiet', '-q', str(quality), '-m', '6',
+                        str(original_image), '-o', str(destination / webp_path)],
+                       check=True)
+        (destination / source.name).write_bytes(final_html)
+    except Exception:
+        shutil.rmtree(destination)
+        raise
+    return final_html, original_image.stat().st_size, (destination / webp_path).stat().st_size
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Defer <img> images via data-src/data-srcset + IntersectionObserver "
@@ -194,7 +235,19 @@ def main(argv=None):
     ap.add_argument('--verify', metavar='REFERENCE.html',
                     help='after transforming, compare the result byte-for-byte with a '
                          'reference file (e.g. the frozen page) and report match/mismatch')
+    ap.add_argument('--webp-image', metavar='SRC',
+                    help='visible local PNG/JPEG img src to convert to WebP; requires --site-output')
+    ap.add_argument('--site-output', metavar='DIR',
+                    help='new directory for the combined HTML and copied assets')
+    ap.add_argument('--quality', metavar='N', type=int, default=90,
+                    help='WebP quality from 0 to 100 (default: 90; cwebp method 6)')
     args = ap.parse_args(argv)
+    if bool(args.webp_image) != bool(args.site_output):
+        ap.error('--webp-image and --site-output must be used together')
+    if args.site_output and args.output:
+        ap.error('--site-output cannot be combined with --output')
+    if not 0 <= args.quality <= 100:
+        ap.error('--quality must be between 0 and 100')
 
     with open(args.source, 'rb') as fh:
         data = fh.read()
@@ -213,7 +266,18 @@ def main(argv=None):
         return 1
 
     selector_note = "" if args.selector == DEFAULT_SELECTOR else " (selector: %s)" % args.selector
-    if args.output:
+    if args.site_output:
+        try:
+            out, before, after = write_combined_site(
+                Path(args.source), out, args.webp_image,
+                Path(args.site_output), args.quality)
+        except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+            print('error: %s' % exc, file=sys.stderr)
+            return 1
+        print('deferred %d <img> tag(s), converted %s: %d -> %d bytes, wrote %s'
+              % (count, args.webp_image, before, after,
+                 Path(args.site_output) / Path(args.source).name))
+    elif args.output:
         with open(args.output, 'wb') as fh:
             fh.write(out)
         print('deferred %d <img> tag(s), inserted deferral script%s, wrote %s'
